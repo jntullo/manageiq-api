@@ -6,21 +6,16 @@ module Api
         @configuration = RequestConfiguration.new(@req, collection_config)
       end
 
-      def validate_api_request
-        validate_optional_collection_classes
-
-        # API Version Validation
+      def validate_api_version
         if @req.version
           vname = @req.version
           unless Api::SUPPORTED_VERSIONS.include?(vname)
             raise BadRequestError, "Unsupported API Version #{vname} specified"
           end
         end
+      end
 
-        validate_api_request_collection if @req.collection
-        validate_api_request_subcollection
-
-        # Method Validation for the collection or sub-collection specified
+      def validate_request_method
         if @configuration.collection_name && @configuration.type
           unless collection_config.supports_http_method?(@configuration.collection_name, @req.method) || @req.method == :options
             raise BadRequestError, "Unsupported HTTP Method #{@req.method} for the #{@configuration.type} #{@configuration.collection_name} specified"
@@ -48,7 +43,6 @@ module Api
       def validate_api_action
         return unless @req.collection
         return if @req.method == :get && @configuration.aspec.nil?
-        return validate_post_method if @req.method == :post
         action_hash = @configuration.action_hash
         raise BadRequestError, "Disabled action #{@req.action}" if action_hash[:disabled]
         unless api_user_role_allows?(action_hash[:identifier])
@@ -142,6 +136,7 @@ module Api
       # For Posts we need to support actions, let's validate those
       #
       def validate_post_method
+        return unless @req.method == :post
         raise BadRequestError, "No actions are supported for #{@configuration} #{@configuration.type}" unless @configuration.aspec
 
         if @configuration.action_hash.blank?
@@ -163,6 +158,7 @@ module Api
       def validate_api_request_collection
         # Collection Validation
         cname = @req.collection
+        return unless cname
         raise BadRequestError, "Unsupported Collection #{cname} specified" unless collection_config[cname]
         if collection_config.primary?(cname)
           if "#{@req.collection_id}#{@req.subcollection}#{@req.subcollection_id}".present?
