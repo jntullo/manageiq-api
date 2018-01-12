@@ -62,14 +62,13 @@ module Api
           end
         end
 
-        validate_post_api_action_as_subcollection(@configuration.collection_name, @req.method, @req.action)
+        validate_post_api_action_as_subcollection
       end
 
       def validate_api_request_collection
-        # Collection Validation
         cname = @req.collection
         return unless cname
-        raise BadRequestError, "Unsupported Collection #{cname} specified" unless collection_config[cname]
+        raise BadRequestError, "Unsupported Collection #{@req.collection} specified" unless collection_config[cname]
         if collection_config.primary?(cname)
           if "#{@req.collection_id}#{@req.subcollection}#{@req.subcollection_id}".present?
             raise BadRequestError, "Invalid request for Collection #{cname} specified"
@@ -88,19 +87,18 @@ module Api
         end
       end
 
-      def validate_post_api_action_as_subcollection(cname, mname, aname)
-        return if cname == @req.collection
-        return if collection_config.subcollection_denied?(@req.collection, cname)
+      def validate_post_api_action_as_subcollection
+        return if @configuration.collection_name == @req.collection
+        return if collection_config.subcollection_denied?(@req.collection, @configuration.collection_name)
+        return unless @configuration.aspec
 
-        aspec = collection_config.typed_subcollection_actions(@req.collection, cname, @req.subcollection_id ? :subresource : :subcollection)
-        return unless aspec
-
+        aname = @req.action
         action_hash = @configuration.action_hash
-        raise BadRequestError, "Unsupported Action #{aname} for the #{cname} sub-collection" if action_hash.blank?
-        raise BadRequestError, "Disabled Action #{aname} for the #{cname} sub-collection" if action_hash[:disabled]
+        raise BadRequestError, "Unsupported Action #{aname} for the #{@configuration.collection_name} sub-collection" if action_hash.blank?
+        raise BadRequestError, "Disabled Action #{aname} for the #{@configuration.collection_name} sub-collection" if action_hash[:disabled]
 
         unless api_user_role_allows?(action_hash[:identifier])
-          raise ForbiddenError, "Use of Action #{aname} for the #{cname} sub-collection is forbidden"
+          raise ForbiddenError, "Use of Action #{aname} for the #{@configuration.collection_name} sub-collection is forbidden"
         end
       end
     end
