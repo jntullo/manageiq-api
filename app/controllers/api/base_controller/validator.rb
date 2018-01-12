@@ -11,9 +11,9 @@ module Api
       end
 
       def validate_request_method
-        if @configuration.collection_name && @configuration.type
-          unless collection_config.supports_http_method?(@configuration.collection_name, @req.method) || @req.method == :options
-            raise BadRequestError, "Unsupported HTTP Method #{@req.method} for the #{@configuration.type} #{@configuration.collection_name} specified"
+        if collection_name && type
+          unless collection_config.supports_http_method?(collection_name, @req.method) || @req.method == :options
+            raise BadRequestError, "Unsupported HTTP Method #{@req.method} for the #{type} #{collection_name} specified"
           end
         end
       end
@@ -37,8 +37,7 @@ module Api
 
       def validate_api_action
         return unless @req.collection
-        return if @req.method == :get && @configuration.aspec.nil?
-        action_hash = @configuration.action_hash
+        return if @req.method == :get && aspec.nil?
         raise BadRequestError, "Disabled action #{@req.action}" if action_hash[:disabled]
         unless api_user_role_allows?(action_hash[:identifier])
           raise ForbiddenError, "Use of the #{@req.action} action is forbidden"
@@ -47,17 +46,17 @@ module Api
 
       def validate_post_method
         return unless @req.method == :post
-        raise BadRequestError, "No actions are supported for #{@configuration} #{@configuration.type}" unless @configuration.aspec
+        raise BadRequestError, "No actions are supported for #{@configuration} #{type}" unless aspec
 
-        if @configuration.action_hash.blank?
-          unless @configuration.type == :resource && @configuration.request_collection_config&.options&.include?(:custom_actions)
-            raise BadRequestError, "Unsupported Action #{@req.action} for the #{@configuration.collection_name} #{@configuration.type} specified"
+        if action_hash.blank?
+          unless type == :resource && req_collection_config&.options&.include?(:custom_actions)
+            raise BadRequestError, "Unsupported Action #{@req.action} for the #{collection_name} #{type} specified"
           end
         end
 
-        if @configuration.action_hash.present?
-          raise BadRequestError, "Disabled Action #{@req.action} for the #{@configuration.collection_name} #{@configuration.type} specified" if @configuration.action_hash[:disabled]
-          unless api_user_role_allows?(@configuration.action_hash[:identifier])
+        if action_hash.present?
+          raise BadRequestError, "Disabled Action #{@req.action} for the #{collection_name} #{type} specified" if action_hash[:disabled]
+          unless api_user_role_allows?(action_hash[:identifier])
             raise ForbiddenError, "Use of Action #{@req.action} is forbidden"
           end
         end
@@ -66,21 +65,20 @@ module Api
       end
 
       def validate_api_request_collection
-        cname = @req.collection
-        return unless cname
-        raise BadRequestError, "Unsupported Collection #{@req.collection} specified" unless collection_config[cname]
-        if collection_config.primary?(cname)
+        return unless @req.collection
+        raise BadRequestError, "Unsupported Collection #{@req.collection} specified" unless collection_config[@req.collection]
+        if primary_collection?
           if "#{@req.collection_id}#{@req.subcollection}#{@req.subcollection_id}".present?
-            raise BadRequestError, "Invalid request for Collection #{cname} specified"
+            raise BadRequestError, "Invalid @req for Collection #{@req.collection} specified"
           end
         else
-          raise BadRequestError, "Unsupported Collection #{cname} specified" unless collection_config.collection?(cname)
+          raise BadRequestError, "Unsupported Collection #{@req.collection} specified" unless collection_config.collection?(@req.collection)
         end
       end
 
       def validate_api_request_subcollection
         # Sub-Collection Validation for the specified Collection
-        if @req.collection && @req.subcollection && !@configuration.arbitrary_resource_path?
+        if @req.collection && @req.subcollection && !arbitrary_resource_path?
           unless collection_config.subcollection?(@req.collection, @req.subcollection)
             raise BadRequestError, "Unsupported Sub-Collection #{@req.subcollection} specified"
           end
@@ -88,18 +86,70 @@ module Api
       end
 
       def validate_post_api_action_as_subcollection
-        return if @configuration.collection_name == @req.collection
-        return if collection_config.subcollection_denied?(@req.collection, @configuration.collection_name)
-        return unless @configuration.aspec
+        return if collection_name == @req.collection
+        return if collection_config.subcollection_denied?(@req.collection, collection_name)
+        return unless aspec
 
-        aname = @req.action
-        action_hash = @configuration.action_hash
-        raise BadRequestError, "Unsupported Action #{aname} for the #{@configuration.collection_name} sub-collection" if action_hash.blank?
-        raise BadRequestError, "Disabled Action #{aname} for the #{@configuration.collection_name} sub-collection" if action_hash[:disabled]
+        raise BadRequestError, "Unsupported Action #{@req.action} for the #{collection_name} sub-collection" if action_hash.blank?
+        raise BadRequestError, "Disabled Action #{@req.action} for the #{collection_name} sub-collection" if action_hash[:disabled]
 
         unless api_user_role_allows?(action_hash[:identifier])
-          raise ForbiddenError, "Use of Action #{aname} for the #{@configuration.collection_name} sub-collection is forbidden"
+          raise ForbiddenError, "Use of Action #{@req.action} for the #{collection_name} sub-collection is forbidden"
         end
+      end
+
+      private
+
+      def req_collection_config
+        @req_collection_config ||= collection_config[@req.collection]
+      end
+
+      def collection_name
+        @collection_name ||= if @req.collection && arbitrary_resource_path?
+                               @req.collection
+                             else
+                               @req.subject
+                             end
+      end
+
+      def arbitrary_resource_path?
+        @arbitrary ||= req_collection_config&.options&.include?(:arbitrary_resource_path)
+      end
+
+      def primary_collection?
+        @primary_collection ||= collection_config.primary?(collection_name)
+      end
+
+      def subcollection
+        @subcollection ||= @req.subcollection
+      end
+
+      def aspec
+        @aspec ||= if @req.subcollection
+                     collection_config.typed_subcollection_actions(@req.collection, collection_name, target) || collection_config.typed_collection_actions(collection_name, target)
+                   else
+                     collection_config.typed_collection_actions(collection_name, target)
+                   end
+      end
+
+      def action_hash
+        Array(aspec[@req.method]).detect { |h| h[:name] == @req.action } || {}
+      end
+
+      def type
+        @type ||= if (@req.collection_id && !@req.subcollection) || (@req.subcollection && @req.subcollection_id)
+                    :resource
+                  else
+                    :collection
+                  end
+      end
+
+      def target
+        @target ||= if @req.subcollection && !req_collection_config.options&.include?(:arbitrary_resource_path)
+                      @req.subcollection_id ? :subresource : :subcollection
+                    else
+                      @req.collection_id ? :resource : :collection
+                    end
       end
     end
   end
