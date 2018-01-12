@@ -21,7 +21,7 @@ module Api
       def validate_optional_collection_classes
         @collection_klasses = {} # Default all to config classes
         param = params['collection_class']
-        return unless param.present?
+        return if param.blank?
 
         klass = collection_class(@req.collection)
         return if param == klass.name
@@ -45,8 +45,8 @@ module Api
       end
 
       def validate_post_method
-        return unless @req.method == :post
-        raise BadRequestError, "No actions are supported for #{@configuration} #{type}" unless aspec
+        return unless method == :post
+        raise BadRequestError, "No actions are supported for #{collection_name} #{type}" unless aspec
 
         if action_hash.blank?
           unless type == :resource && req_collection_config&.options&.include?(:custom_actions)
@@ -132,8 +132,16 @@ module Api
                    end
       end
 
+      def method
+        @method ||= if @req.method == :put || @req.method == :patch
+                      :post
+                    else
+                      @req.method
+                    end
+      end
+
       def action_hash
-        Array(aspec[@req.method]).detect { |h| h[:name] == @req.action } || {}
+        @action_hash = Array(aspec[method]).detect { |h| h[:name] == @req.action } || {}
       end
 
       def type
